@@ -12,6 +12,7 @@ const getEnvApiKey = (): string => {
 };
 
 const GOOGLE_API_KEY = getEnvApiKey();
+console.log("GOOGLE_API_KEY length =", GOOGLE_API_KEY.length);
 const ai = new GoogleGenAI({ apiKey: GOOGLE_API_KEY || 'dummy-key' });
 
 const SYSTEM_INSTRUCTION = `
