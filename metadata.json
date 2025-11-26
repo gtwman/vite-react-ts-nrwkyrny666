@@ -1,0 +1,7 @@
+{
+  "name": "Penghu Family Trip 2025",
+  "description": "Customized travel guide for family trip to Penghu (Nov 28 - Dec 1, 2025) staying at Sheng Guo Hotel.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
