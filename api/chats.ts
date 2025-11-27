@@ -1,5 +1,10 @@
-// api/chats.ts － Vercel Edge Function，跑在後端
+// api/chats.ts － Vercel Serverless Function（跑在後端）
+// 這支程式只會在 server 上執行，看不到你的 API Key
+
+import { GoogleGenAI } from "@google/genai";
+
 export const config = {
+  // 你要用 Edge 也可以，用預設 nodejs 也沒關係
   runtime: "edge",
 };
 
@@ -36,7 +41,7 @@ export default async function handler(req: Request): Promise<Response> {
     // 解析前端 body
     let body: { message?: string; history?: HistoryItem[] } = {};
     try {
-      body = (await req.json()) ?? {};
+      body = await req.json();
     } catch {
       return new Response(
         JSON.stringify({ error: "Invalid JSON body" }),
@@ -53,6 +58,7 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
+    // 從後端環境變數拿 API Key（只存在 server）
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
       console.error("GOOGLE_API_KEY is missing on server");
@@ -62,60 +68,27 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    // 把歷史訊息轉成 Gemini 需要的 contents
-    const contents = [
-      ...(Array.isArray(history) ? history : []).map((h) => ({
+    // 建立 GoogleGenAI client（在後端用，不會暴露 key）
+    const ai = new GoogleGenAI({ apiKey });
+
+    // 用官方 chats.create 介面，history 轉成正確格式
+    const chat = ai.chats.create({
+      // 模型可以先用最穩定的 2.0 flash，之後要換再改這行即可
+      model: "gemini-2.0-flash",
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+      },
+      history: (Array.isArray(history) ? history : []).map((h) => ({
         role: h.role === "model" ? "model" : "user",
         parts: [{ text: String(h.text ?? "") }],
       })),
-      {
-        role: "user",
-        parts: [{ text: message }],
-      },
-    ];
-
-    const payload = {
-      contents,
-      systemInstruction: {
-        // systemInstruction 也是 Content 型別，這裡只放文字就好
-        parts: [{ text: SYSTEM_INSTRUCTION }],
-      },
-    };
-
-    // 官方推薦的 endpoint ＋ 在 query string 帶 key
-    const url =
-      "https://generativelanguage.googleapis.com/" +
-      "v1beta/models/gemini-2.0-flash:generateContent" +
-      `?key=${encodeURIComponent(apiKey)}`;
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
     });
 
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error("Gemini API error:", resp.status, errText);
-      return new Response(
-        JSON.stringify({
-          error: "Gemini API error",
-          status: resp.status,
-          detail: errText,
-        }),
-        { status: 502, headers: { "Content-Type": "application/json" } }
-      );
-    }
+    // 送出這次訊息
+    const result = await chat.sendMessage({ message });
 
-    const data = await resp.json();
-
-    const text =
-      data?.candidates?.[0]?.content?.parts
-        ?.map((p: any) => p.text)
-        .filter(Boolean)
-        .join("\n") ?? "";
+    // 官方 SDK 會幫你把 response.text 算好
+    const text = result?.text ?? "";
 
     return new Response(JSON.stringify({ text }), {
       status: 200,
@@ -125,7 +98,8 @@ export default async function handler(req: Request): Promise<Response> {
     console.error("Server chat error:", err);
     return new Response(
       JSON.stringify({
-        error: err?.message || "Server error",
+        error: "Server error",
+        detail: err?.message ?? String(err),
       }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
