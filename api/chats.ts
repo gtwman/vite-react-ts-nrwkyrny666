@@ -74,27 +74,29 @@ export default async function handler(req: Request): Promise<Response> {
       },
     ];
 
+    // 注意：REST API 的欄位名稱是 system_instruction（蛇形命名）
     const payload = {
       contents,
-      systemInstruction: {
+      system_instruction: {
         role: "user",
         parts: [{ text: SYSTEM_INSTRUCTION }],
       },
     };
 
-    // 直接呼叫 Gemini REST API（不再用 SDK，比較好除錯）
-    const resp = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body: JSON.stringify(payload),
-      }
-    );
+    // 正確的 Gemini REST API endpoint
+    const url =
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent" +
+      `?key=${encodeURIComponent(apiKey)}`;
 
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    // 處理 Gemini API 回傳錯誤
     if (!resp.ok) {
       const errText = await resp.text();
       console.error("Gemini API HTTP error:", resp.status, errText);
@@ -104,12 +106,15 @@ export default async function handler(req: Request): Promise<Response> {
           status: resp.status,
           detail: errText,
         }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
+        {
+          status: resp.status,
+          headers: { "Content-Type": "application/json" },
+        }
       );
     }
 
+    // 正常情況解析回傳文字
     const data = await resp.json();
-
     const text =
       data?.candidates?.[0]?.content?.parts
         ?.map((p: any) => p.text)
