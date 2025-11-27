@@ -25,7 +25,6 @@ type HistoryItem = { role: "user" | "model"; text: string };
 
 export default async function handler(req: Request): Promise<Response> {
   try {
-    // 只接受 POST
     if (req.method !== "POST") {
       return new Response(
         JSON.stringify({ error: "Method Not Allowed" }),
@@ -33,7 +32,6 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    // 解析 body
     let body: { message?: string; history?: HistoryItem[] } = {};
     try {
       body = await req.json();
@@ -62,7 +60,7 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    // ---------- 組 contents（歷史 + 這次訊息） ----------
+    // 組 contents（歷史 + 這次）
     const contents = [
       ...(Array.isArray(history) ? history : []).map((h) => ({
         role: h.role === "model" ? "model" : "user",
@@ -74,16 +72,18 @@ export default async function handler(req: Request): Promise<Response> {
       },
     ];
 
+    // 🔧 這裡是關鍵：v1 用 system_instruction（底線）
     const payload = {
       contents,
-      systemInstruction: {
+      system_instruction: {
         role: "user",
         parts: [{ text: SYSTEM_INSTRUCTION }],
       },
     };
 
-    // ---------- 呼叫 Gemini v1 generateContent ----------
-    const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`;
 
     const resp = await fetch(endpoint, {
       method: "POST",
