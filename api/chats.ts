@@ -1,4 +1,4 @@
-// api/chats.ts - Vercel Edge Function，後端呼叫 Gemini v1 API
+// api/chats.ts － Vercel Edge Function，跑在後端
 export const config = {
   runtime: "edge",
 };
@@ -25,6 +25,7 @@ type HistoryItem = { role: "user" | "model"; text: string };
 
 export default async function handler(req: Request): Promise<Response> {
   try {
+    // 只接受 POST
     if (req.method !== "POST") {
       return new Response(
         JSON.stringify({ error: "Method Not Allowed" }),
@@ -32,9 +33,10 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
+    // 解析前端 body
     let body: { message?: string; history?: HistoryItem[] } = {};
     try {
-      body = await req.json();
+      body = (await req.json()) ?? {};
     } catch {
       return new Response(
         JSON.stringify({ error: "Invalid JSON body" }),
@@ -60,7 +62,7 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    // 組 contents（歷史 + 這次）
+    // 把歷史訊息轉成 Gemini 需要的 contents
     const contents = [
       ...(Array.isArray(history) ? history : []).map((h) => ({
         role: h.role === "model" ? "model" : "user",
@@ -72,20 +74,21 @@ export default async function handler(req: Request): Promise<Response> {
       },
     ];
 
-    // 🔧 這裡是關鍵：v1 用 system_instruction（底線）
     const payload = {
       contents,
-      system_instruction: {
-        role: "user",
+      systemInstruction: {
+        // systemInstruction 也是 Content 型別，這裡只放文字就好
         parts: [{ text: SYSTEM_INSTRUCTION }],
       },
     };
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
+    // 官方推薦的 endpoint ＋ 在 query string 帶 key
+    const url =
+      "https://generativelanguage.googleapis.com/" +
+      "v1beta/models/gemini-2.0-flash:generateContent" +
+      `?key=${encodeURIComponent(apiKey)}`;
 
-    const resp = await fetch(endpoint, {
+    const resp = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -95,14 +98,14 @@ export default async function handler(req: Request): Promise<Response> {
 
     if (!resp.ok) {
       const errText = await resp.text();
-      console.error("Gemini API HTTP error:", resp.status, errText);
+      console.error("Gemini API error:", resp.status, errText);
       return new Response(
         JSON.stringify({
           error: "Gemini API error",
           status: resp.status,
           detail: errText,
         }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
+        { status: 502, headers: { "Content-Type": "application/json" } }
       );
     }
 
