@@ -1,5 +1,7 @@
-// /api/chat.ts  （Vercel Serverless Function，跑在後端）
-import { GoogleGenAI } from "@google/genai";
+// api/chats.ts - Vercel Edge Function，跑在後端
+export const config = {
+  runtime: "edge",
+};
 
 const SYSTEM_INSTRUCTION = `
 You are a knowledgeable local travel guide for Penghu, Taiwan.
@@ -19,46 +21,112 @@ Focus on:
 Language: Traditional Chinese (Taiwan).
 `;
 
-export default async function handler(req: any, res: any) {
+type HistoryItem = { role: "user" | "model"; text: string };
+
+export default async function handler(req: Request): Promise<Response> {
   try {
+    // 只接受 POST
     if (req.method !== "POST") {
-      res.status(405).json({ error: "Method Not Allowed" });
-      return;
+      return new Response(
+        JSON.stringify({ error: "Method Not Allowed" }),
+        { status: 405, headers: { "Content-Type": "application/json" } }
+      );
     }
 
-    const { message, history = [] } = req.body || {};
+    // 解析前端送來的 body
+    let body: { message?: string; history?: HistoryItem[] } = {};
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const { message, history = [] } = body;
 
     if (!message || typeof message !== "string") {
-      res.status(400).json({ error: 'Missing "message"' });
-      return;
+      return new Response(
+        JSON.stringify({ error: 'Missing "message"' }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
       console.error("GOOGLE_API_KEY is missing on server");
-      res.status(500).json({ error: "Missing GOOGLE_API_KEY on server" });
-      return;
+      return new Response(
+        JSON.stringify({ error: "Missing GOOGLE_API_KEY on server" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
     }
 
-    const ai = new GoogleGenAI({ apiKey });
-
-    const chat = ai.chats.create({
-      model: "gemini-2.5-flash",
-      config: { systemInstruction: SYSTEM_INSTRUCTION },
-      history: (Array.isArray(history) ? history : []).map((h: any) => ({
-        role: h?.role === "model" ? "model" : "user",
-        parts: [{ text: String(h?.text ?? "") }],
+    // 把前端歷史訊息改成 Gemini 需要的 contents 格式
+    const contents = [
+      ...(Array.isArray(history) ? history : []).map((h) => ({
+        role: h.role === "model" ? "model" : "user",
+        parts: [{ text: String(h.text ?? "") }],
       })),
-    });
+      {
+        role: "user",
+        parts: [{ text: message }],
+      },
+    ];
 
-    const result = await chat.sendMessage({ text: message });
+    const payload = {
+      contents,
+      systemInstruction: {
+        role: "user",
+        parts: [{ text: SYSTEM_INSTRUCTION }],
+      },
+    };
+
+    // 直接呼叫 Gemini REST API（不再用 SDK，比較好除錯）
+    const resp = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("Gemini API HTTP error:", resp.status, errText);
+      return new Response(
+        JSON.stringify({
+          error: "Gemini API error",
+          status: resp.status,
+          detail: errText,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const data = await resp.json();
 
     const text =
-      result?.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      data?.candidates?.[0]?.content?.parts
+        ?.map((p: any) => p.text)
+        .filter(Boolean)
+        .join("\n") ?? "";
 
-    res.status(200).json({ text });
+    return new Response(JSON.stringify({ text }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (err: any) {
-    console.error("Server chat error:", err?.message || err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Server chat error:", err);
+    return new Response(
+      JSON.stringify({
+        error: err?.message || "Server error",
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 }
