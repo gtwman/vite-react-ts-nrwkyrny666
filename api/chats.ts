@@ -1,4 +1,4 @@
-// api/chats.ts - Vercel Edge Function，跑在後端
+// api/chats.ts - Vercel Edge Function，後端呼叫 Gemini v1 API
 export const config = {
   runtime: "edge",
 };
@@ -33,7 +33,7 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    // 解析前端送來的 body
+    // 解析 body
     let body: { message?: string; history?: HistoryItem[] } = {};
     try {
       body = await req.json();
@@ -62,7 +62,7 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    // 把前端歷史訊息改成 Gemini 需要的 contents 格式
+    // ---------- 組 contents（歷史 + 這次訊息） ----------
     const contents = [
       ...(Array.isArray(history) ? history : []).map((h) => ({
         role: h.role === "model" ? "model" : "user",
@@ -74,21 +74,18 @@ export default async function handler(req: Request): Promise<Response> {
       },
     ];
 
-    // 注意：REST API 的欄位名稱是 system_instruction（蛇形命名）
     const payload = {
       contents,
-      system_instruction: {
+      systemInstruction: {
         role: "user",
         parts: [{ text: SYSTEM_INSTRUCTION }],
       },
     };
 
-    // 正確的 Gemini REST API endpoint
-    const url =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent" +
-      `?key=${encodeURIComponent(apiKey)}`;
+    // ---------- 呼叫 Gemini v1 generateContent ----------
+    const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-    const resp = await fetch(url, {
+    const resp = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -96,7 +93,6 @@ export default async function handler(req: Request): Promise<Response> {
       body: JSON.stringify(payload),
     });
 
-    // 處理 Gemini API 回傳錯誤
     if (!resp.ok) {
       const errText = await resp.text();
       console.error("Gemini API HTTP error:", resp.status, errText);
@@ -106,15 +102,12 @@ export default async function handler(req: Request): Promise<Response> {
           status: resp.status,
           detail: errText,
         }),
-        {
-          status: resp.status,
-          headers: { "Content-Type": "application/json" },
-        }
+        { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // 正常情況解析回傳文字
     const data = await resp.json();
+
     const text =
       data?.candidates?.[0]?.content?.parts
         ?.map((p: any) => p.text)
